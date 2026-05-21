@@ -3,6 +3,37 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Components/TextRenderComponent.h"
+#include "PipsDomino.h"
+
+
+static FString GetRegionBadgeText(const FPipsRegion& Region)
+{
+    switch (Region.Type)
+    {
+    case EPipsRegionType::Sum:     return FString::FromInt(Region.Target);
+    case EPipsRegionType::Equals:  return TEXT("=");
+    case EPipsRegionType::Unequal: return TEXT("≠");
+    case EPipsRegionType::Greater: return FString::Printf(TEXT(">%d"), Region.Target);
+    case EPipsRegionType::Less:    return FString::Printf(TEXT("<%d"), Region.Target);
+    case EPipsRegionType::Empty:   return FString();
+    default: return FString();
+    }
+}
+
+static FIntPoint GetBadgeAnchorCell(const FPipsRegion& Region)
+{
+    FIntPoint Anchor(-INT_MAX, -INT_MAX);
+    for (const FIntPoint& Cell : Region.Cells)
+    {
+        if (Cell.X > Anchor.X || (Cell.X == Anchor.X && Cell.Y > Anchor.Y))
+        {
+            Anchor = Cell;
+        }
+    }
+    return Anchor;
+}
 
 APipsBoard::APipsBoard()
 {
@@ -47,21 +78,36 @@ FVector APipsBoard::GridToLocal(const FIntPoint& Cell) const
     return FVector(-Cell.X * CellSize, Cell.Y * CellSize, 0.f);
 }
 
-void APipsBoard::ClearCells()
+void APipsBoard::ClearVisuals()
 {
     for (UStaticMeshComponent* Mesh : CellMeshes)
     {
-        if (IsValid(Mesh))
-        {
-            Mesh->DestroyComponent();
-        }
+        if (IsValid(Mesh)) Mesh->DestroyComponent();
     }
     CellMeshes.Reset();
+
+    for (UTextRenderComponent* Text : BadgeTexts)
+    {
+        if (IsValid(Text)) Text->DestroyComponent();
+    }
+    BadgeTexts.Reset();
+
+    for (UStaticMeshComponent* Backing : BadgeBackings)
+    {
+        if (IsValid(Backing)) Backing->DestroyComponent();
+    }
+    BadgeBackings.Reset();
+    
+    for (APipsDomino* D : TrayDominoes)
+    {
+        if (IsValid(D)) D->Destroy();
+    }
+    TrayDominoes.Reset();
 }
 
 void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
 {
-    ClearCells();
+    ClearVisuals();
 
     // Find Engine's built-in cube mesh — perfect placeholder.
     UStaticMesh* CubeMesh = LoadObject<UStaticMesh>(
@@ -72,17 +118,21 @@ void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
         return;
     }
 
-    // First pass: collect unique cells and compute bounding box.
-    TSet<FIntPoint> UniqueCells;
-    for (const FPipsRegion& Region : Puzzle.Regions)
+    // First pass: collect cells with their region index, and compute bounding box.
+    TMap<FIntPoint, int32> CellToRegion;   // cell -> region index
+    for (int32 RegionIdx = 0; RegionIdx < Puzzle.Regions.Num(); ++RegionIdx)
     {
-        for (const FIntPoint& Cell : Region.Cells)
+        for (const FIntPoint& Cell : Puzzle.Regions[RegionIdx].Cells)
         {
-            UniqueCells.Add(Cell);
+            // First region claiming a cell wins (cells shouldn't overlap in valid data).
+            if (!CellToRegion.Contains(Cell))
+            {
+                CellToRegion.Add(Cell, RegionIdx);
+            }
         }
     }
 
-    if (UniqueCells.Num() == 0)
+    if (CellToRegion.Num() == 0)
     {
         UE_LOG(LogTemp, Warning, TEXT("PipsBoard: puzzle has no cells to spawn"));
         return;
@@ -90,22 +140,24 @@ void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
 
     FIntPoint MinCell( INT_MAX,  INT_MAX);
     FIntPoint MaxCell(-INT_MAX, -INT_MAX);
-    for (const FIntPoint& Cell : UniqueCells)
+    for (const TPair<FIntPoint, int32>& Pair : CellToRegion)
     {
-        MinCell.X = FMath::Min(MinCell.X, Cell.X);
-        MinCell.Y = FMath::Min(MinCell.Y, Cell.Y);
-        MaxCell.X = FMath::Max(MaxCell.X, Cell.X);
-        MaxCell.Y = FMath::Max(MaxCell.Y, Cell.Y);
+        MinCell.X = FMath::Min(MinCell.X, Pair.Key.X);
+        MinCell.Y = FMath::Min(MinCell.Y, Pair.Key.Y);
+        MaxCell.X = FMath::Max(MaxCell.X, Pair.Key.X);
+        MaxCell.Y = FMath::Max(MaxCell.Y, Pair.Key.Y);
     }
 
-    // Centroid in grid coordinates (use float for half-cell offsets).
     const float CentroidRow = (MinCell.X + MaxCell.X) * 0.5f;
     const float CentroidCol = (MinCell.Y + MaxCell.Y) * 0.5f;
     const FVector Centroid(-CentroidRow * CellSize, CentroidCol * CellSize, 0.f);
 
-    // Second pass: spawn tiles, offset so centroid sits at board origin.
-    for (const FIntPoint& Cell : UniqueCells)
+    // Second pass: spawn tiles, tinted by region color.
+    for (const TPair<FIntPoint, int32>& Pair : CellToRegion)
     {
+        const FIntPoint& Cell = Pair.Key;
+        const int32 RegionIdx = Pair.Value;
+
         UStaticMeshComponent* Mesh = NewObject<UStaticMeshComponent>(this);
         Mesh->SetStaticMesh(CubeMesh);
         Mesh->SetupAttachment(Root);
@@ -119,8 +171,134 @@ void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
             CellSize / 100.f,
             TileHeight / 100.f));
 
+        // Create a dynamic material instance and tint it.
+        if (CellMaterial)
+        {
+            UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(CellMaterial, this);
+            MID->SetVectorParameterValue(TEXT("BaseColor"), GetRegionColor(RegionIdx));
+            Mesh->SetMaterial(0, MID);
+        }
+
         CellMeshes.Add(Mesh);
     }
 
-    UE_LOG(LogTemp, Display, TEXT("PipsBoard: spawned %d cell tiles"), CellMeshes.Num());
+    UE_LOG(LogTemp, Display, TEXT("PipsBoard: spawned %d cell tiles across %d regions"),
+        CellMeshes.Num(), Puzzle.Regions.Num());
+
+    // Third pass: spawn constraint badges for non-empty regions.
+    for (int32 RegionIdx = 0; RegionIdx < Puzzle.Regions.Num(); ++RegionIdx)
+    {
+        const FPipsRegion& Region = Puzzle.Regions[RegionIdx];
+        const FString BadgeText = GetRegionBadgeText(Region);
+        if (BadgeText.IsEmpty()) continue;
+
+        const FIntPoint AnchorCell = GetBadgeAnchorCell(Region);
+        const FVector AnchorLocal = GridToLocal(AnchorCell) - Centroid;
+
+        // Position badge at the bottom-right corner of the anchor cell, slightly raised.
+        const FVector BadgeOffset(-CellSize * 0.35f, CellSize * 0.35f, 60.f);
+        const FVector BadgePos = AnchorLocal + BadgeOffset;
+
+        // Colored backing cube.
+        UStaticMeshComponent* Backing = NewObject<UStaticMeshComponent>(this);
+        Backing->SetStaticMesh(CubeMesh);
+        Backing->SetupAttachment(Root);
+        Backing->RegisterComponent();
+        Backing->SetRelativeLocation(BadgePos);
+        Backing->SetRelativeScale3D(FVector(0.30f, 0.30f, 0.30f));
+
+        if (CellMaterial)
+        {
+            UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(CellMaterial, this);
+            MID->SetVectorParameterValue(TEXT("BaseColor"), GetRegionColor(RegionIdx));
+            Backing->SetMaterial(0, MID);
+        }
+
+        BadgeBackings.Add(Backing);
+
+        // Text on top of the backing.
+        UTextRenderComponent* Text = NewObject<UTextRenderComponent>(this);
+        Text->SetupAttachment(Root);
+        Text->RegisterComponent();
+        Text->SetText(FText::FromString(BadgeText));
+        Text->SetTextRenderColor(FColor::White);
+        Text->SetWorldSize(40.f);
+        Text->SetHorizontalAlignment(EHTA_Center);
+        Text->SetVerticalAlignment(EVRTA_TextCenter);
+
+        // Position slightly above the backing, rotated to lie flat (face up toward camera).
+        Text->SetRelativeLocation(BadgePos + FVector(0, 0, 18.f));
+        Text->SetRelativeRotation(FRotator(90.f, 180.f, 0.f)); // face up, readable from +X direction
+
+        BadgeTexts.Add(Text);
+    }
+
+    UE_LOG(LogTemp, Display, TEXT("PipsBoard: spawned %d badges"), BadgeTexts.Num());
+
+    // Tray: spawn the puzzle's dominoes below the board.
+    // Dominoes are oriented "short" (long axis = Y, vertical on screen) to fit more per row.
+    const int32 NumDominoes = Puzzle.Dominoes.Num();
+
+    // Pack tray as a roughly-square grid, with up to 8 per row.
+    const int32 TrayCols = FMath::Min(NumDominoes, 8);
+    const int32 TrayRows = FMath::DivideAndRoundUp(NumDominoes, TrayCols);
+
+    // When dominoes are rotated 90° (vertical), they occupy:
+    //   X (depth into screen) = CellSize (their long axis)
+    //   Y (across screen)     = CellSize * 0.9 (their width)
+    const float DominoSlotX = CellSize * 1.15f; // depth spacing per row
+    const float DominoSlotY = CellSize * 1.05f; // width spacing per column
+
+    // Place tray below the board (more negative X from centroid).
+    const float TrayStartX = -(MaxCell.X - CentroidRow + 1.5f) * CellSize - DominoSlotX;
+    const float RowWidth = (TrayCols - 1) * DominoSlotY;
+
+    for (int32 i = 0; i < NumDominoes; ++i)
+    {
+        const int32 Row = i / TrayCols;
+        const int32 Col = i % TrayCols;
+
+        const FVector SpawnLocal(
+            TrayStartX - Row * DominoSlotX,
+            (Col * DominoSlotY) - (RowWidth * 0.5f),
+            20.f);
+
+        const FVector SpawnWorld = GetActorLocation() + SpawnLocal;
+        const FRotator SpawnRot(0.f, 90.f, 0.f); // Yaw 90 = long axis aligned with Y
+
+        FActorSpawnParameters Params;
+        Params.Owner = this;
+        APipsDomino* Domino = GetWorld()->SpawnActor<APipsDomino>(
+            APipsDomino::StaticClass(), SpawnWorld, SpawnRot, Params);
+        if (Domino)
+        {
+            Domino->DominoMaterial = DominoMaterial;
+            Domino->PipMaterial = PipMaterial;
+            Domino->Initialize(Puzzle.Dominoes[i].A, Puzzle.Dominoes[i].B, CellSize);
+            TrayDominoes.Add(Domino);
+        }
+    }
+
+    UE_LOG(LogTemp, Display, TEXT("PipsBoard: spawned %d dominoes in tray (%dx%d)"),
+        TrayDominoes.Num(), TrayRows, TrayCols);
+}
+
+FLinearColor APipsBoard::GetRegionColor(int32 RegionIndex)
+{
+    // 12-color palette loosely inspired by the NYT puzzle: muted but distinct.
+    static const TArray<FLinearColor> Palette = {
+        FLinearColor(0.78f, 0.55f, 0.82f), // purple
+        FLinearColor(0.96f, 0.62f, 0.71f), // pink
+        FLinearColor(0.50f, 0.78f, 0.82f), // teal
+        FLinearColor(0.98f, 0.72f, 0.45f), // orange
+        FLinearColor(0.70f, 0.70f, 0.78f), // slate
+        FLinearColor(0.75f, 0.80f, 0.50f), // olive
+        FLinearColor(0.92f, 0.45f, 0.50f), // coral
+        FLinearColor(0.45f, 0.62f, 0.85f), // blue
+        FLinearColor(0.55f, 0.82f, 0.55f), // green
+        FLinearColor(0.92f, 0.85f, 0.45f), // yellow
+        FLinearColor(0.65f, 0.50f, 0.40f), // brown
+        FLinearColor(0.40f, 0.78f, 0.85f), // cyan
+    };
+    return Palette[RegionIndex % Palette.Num()];
 }

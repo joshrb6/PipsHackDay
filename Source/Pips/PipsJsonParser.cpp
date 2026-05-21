@@ -46,7 +46,7 @@ namespace
                 if (!V.IsValid() || V->Type != EJson::Array) continue;
                 const TArray<TSharedPtr<FJsonValue>>& Pair = V->AsArray();
                 if (Pair.Num() != 2) continue;
-                FPipsDomino D;
+                FPipsDominoData D;
                 D.A = static_cast<int32>(Pair[0]->AsNumber());
                 D.B = static_cast<int32>(Pair[1]->AsNumber());
                 Out.Dominoes.Add(D);

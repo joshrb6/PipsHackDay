@@ -25,7 +25,7 @@ enum class EPipsDifficulty : uint8
 
 /** A single domino piece: two pip values (0-6). */
 USTRUCT(BlueprintType)
-struct FPipsDomino
+struct FPipsDominoData
 {
     GENERATED_BODY()
 
@@ -83,7 +83,7 @@ struct FPipsPuzzle
     FString Constructors;
 
     UPROPERTY(BlueprintReadOnly, EditAnywhere)
-    TArray<FPipsDomino> Dominoes;
+    TArray<FPipsDominoData> Dominoes;
 
     UPROPERTY(BlueprintReadOnly, EditAnywhere)
     TArray<FPipsRegion> Regions;
