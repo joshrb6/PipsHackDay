@@ -167,6 +167,9 @@ void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
         MaxCell.X = FMath::Max(MaxCell.X, Pair.Key.X);
         MaxCell.Y = FMath::Max(MaxCell.Y, Pair.Key.Y);
     }
+    
+    CachedMinCell = MinCell;
+    CachedMaxCell = MaxCell;
 
     const float CentroidRow = (MinCell.X + MaxCell.X) * 0.5f;
     const float CentroidCol = (MinCell.Y + MaxCell.Y) * 0.5f;
@@ -313,8 +316,41 @@ void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
         }
     }
 
+    const float TrayCenterX = TrayStartX - (TrayRows - 1) * DominoSlotX * 0.5f;
+    const float TrayHalfX = (TrayRows * DominoSlotX) * 0.5f;
+    const float TrayHalfY = (RowWidth * 0.5f) + CellSize; // dominoes extend 1 cell beyond center along their long axis (Y for yaw=90)
+
+    CachedTrayLocalBox = FBox(
+        FVector(TrayCenterX - TrayHalfX, -TrayHalfY, 0.f),
+        FVector(TrayCenterX + TrayHalfX,  TrayHalfY, 0.f));
+
     UE_LOG(LogTemp, Display, TEXT("PipsBoard: spawned %d dominoes in tray (%dx%d)"),
         TrayDominoes.Num(), TrayRows, TrayCols);
+
+    OnPuzzleSpawned.Broadcast();
+}
+
+FBox APipsBoard::GetVisibleBounds() const
+{
+    // Board cell bounds in local space. Cells already centered around board origin via CachedCentroid.
+    const FVector CellMinLocal = GridToLocal(CachedMaxCell) - CachedCentroid;
+    const FVector CellMaxLocal = GridToLocal(CachedMinCell) - CachedCentroid;
+    FBox LocalBox(
+        FVector(FMath::Min(CellMinLocal.X, CellMaxLocal.X) - CellSize * 0.5f,
+                FMath::Min(CellMinLocal.Y, CellMaxLocal.Y) - CellSize * 0.5f, 0.f),
+        FVector(FMath::Max(CellMinLocal.X, CellMaxLocal.X) + CellSize * 0.5f,
+                FMath::Max(CellMinLocal.Y, CellMaxLocal.Y) + CellSize * 0.5f, 0.f));
+
+    // Union with tray.
+    LocalBox += CachedTrayLocalBox;
+
+    // Pad a bit so things don't kiss the screen edge.
+    LocalBox = LocalBox.ExpandBy(CellSize * 0.5f);
+
+    const FBox WorldBox = LocalBox.TransformBy(GetActorTransform());
+    UE_LOG(LogTemp, Warning, TEXT("GetVisibleBounds: local=%s tray=%s world=%s"),
+        *LocalBox.ToString(), *CachedTrayLocalBox.ToString(), *WorldBox.ToString());
+    return WorldBox;
 }
 
 TMap<FIntPoint, int32> APipsBoard::CollectCellValues() const

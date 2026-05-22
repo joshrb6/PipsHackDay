@@ -46,6 +46,8 @@ private:
 	APipsDomino* FindDanglingDomino() const;
 	void ResolveDangling(APipsDomino* Domino);
 
+	void FitCameraToBoard();
+
 	/** Cached board reference. Found on first use. */
 	UPROPERTY()
 	class APipsBoard* Board = nullptr;

@@ -10,6 +10,7 @@ class UTextRenderComponent;
 
 DECLARE_MULTICAST_DELEGATE(FOnPuzzleSolved);
 DECLARE_MULTICAST_DELEGATE(FOnPuzzleInvalid);
+DECLARE_MULTICAST_DELEGATE(FOnPuzzleSpawned);
 
 UCLASS()
 class PIPS_API APipsBoard : public AActor
@@ -41,6 +42,7 @@ public:
 
 	FOnPuzzleSolved OnPuzzleSolved;
 	FOnPuzzleInvalid OnPuzzleInvalid;
+	FOnPuzzleSpawned OnPuzzleSpawned;
 
 	/** Builds a cell-to-pip-value map from currently placed dominoes. */
 	TMap<FIntPoint, int32> CollectCellValues() const;
@@ -59,6 +61,9 @@ public:
 
 	UPROPERTY()
 	TArray<class APipsDomino*> TrayDominoes;
+	
+	/** Cells that exist in the current puzzle (for fast validity queries). */
+	TSet<FIntPoint> ValidCells;
 
 
 	/** Returns true if a cell exists in the currently loaded puzzle. */
@@ -84,7 +89,9 @@ public:
 	/** Z height of the top face of a placed domino. */
 	UFUNCTION(BlueprintCallable, Category = "Pips")
 	float GetPlacementZ() const;
-	
+
+	UFUNCTION(BlueprintCallable, Category = "Pips")
+	FBox GetVisibleBounds() const;
 protected:
 	virtual void BeginPlay() override;
 
@@ -102,12 +109,16 @@ private:
 
 	UPROPERTY()
 	TArray<UStaticMeshComponent*> BadgeBackings;
+
+	/** Min/max cell indices, used for visible bounds calc. */
+	FIntPoint CachedMinCell;
+	FIntPoint CachedMaxCell;
+
+	/** Tray extents (in board-local space, X back from board, Y centered). */
+	FBox CachedTrayLocalBox = FBox(ForceInit);
 	
 	/** Cached centroid offset used to center the puzzle at the board origin. */
 	FVector CachedCentroid = FVector::ZeroVector;
-
-	/** Cells that exist in the current puzzle (for fast validity queries). */
-	TSet<FIntPoint> ValidCells;
 
 	/** Which domino (if any) currently occupies each cell. */
 	TMap<FIntPoint, class APipsDomino*> CellOccupancy;

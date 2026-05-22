@@ -5,6 +5,7 @@
 
 #include "PipsBoard.h"
 #include "EngineUtils.h"
+#include "Camera/CameraComponent.h"
 
 void APipsPlayerController::BeginPlay()
 {
@@ -15,8 +16,21 @@ void APipsPlayerController::BeginPlay()
 	{
 		SetViewTargetWithBlend(*It, 0.f);
 		UE_LOG(LogTemp, Display, TEXT("PipsPlayerController: view target set to %s"), *It->GetName());
+
+		if (APipsBoard* B = GetBoard())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BeginPlay: subscribing to OnPuzzleSpawned"));
+			B->OnPuzzleSpawned.AddUObject(this, &APipsPlayerController::FitCameraToBoard);
+			// In case the board already spawned before we hooked the delegate:
+			if (B->ValidCells.Num() > 0)
+			{
+				FitCameraToBoard();
+			}
+		}
 		return;
 	}
+
+	
 	UE_LOG(LogTemp, Warning, TEXT("PipsPlayerController: no CameraActor found in level"));
 }
 
@@ -280,4 +294,71 @@ void APipsPlayerController::OnRotatePressed()
 	{
 		RotatePlacedDomino(HoveredDomino);
 	}
+}
+
+void APipsPlayerController::FitCameraToBoard()
+{
+    UE_LOG(LogTemp, Warning, TEXT("FitCameraToBoard: called"));
+    APipsBoard* B = GetBoard();
+    if (!B) return;
+
+    ACameraActor* Cam = nullptr;
+    for (TActorIterator<ACameraActor> It(GetWorld()); It; ++It) { Cam = *It; break; }
+    if (!Cam) return;
+
+    const FBox Bounds = B->GetVisibleBounds();
+    if (!Bounds.IsValid) return;
+
+    const FVector Center = Bounds.GetCenter();
+    const FVector Extents = Bounds.GetExtent();
+
+    UCameraComponent* CamComp = Cam->GetCameraComponent();
+    const float FOV = CamComp ? CamComp->FieldOfView : 90.f;
+
+    float AspectRatio = 16.f / 9.f;
+    int32 ViewportSizeX = 0, ViewportSizeY = 0;
+    GetViewportSize(ViewportSizeX, ViewportSizeY);
+    if (ViewportSizeY > 0)
+    {
+        AspectRatio = static_cast<float>(ViewportSizeX) / static_cast<float>(ViewportSizeY);
+    }
+
+    // Camera setup: pitched down, no yaw.
+    const float PitchDeg = -75.f;
+    const float PitchRad = FMath::DegreesToRadians(PitchDeg);
+
+    // Project the AABB onto the camera's screen plane.
+    // For pitch P (negative = down), the camera forward is (cos|P|, 0, -sin|P|).
+    // Camera-right is world Y (no roll/yaw). Camera-up is (sin|P|, 0, cos|P|).
+    //
+    // For an AABB with half-extents (Ex, Ey, Ez):
+    //   horizontal screen half-extent = Ey
+    //   vertical   screen half-extent = Ex * sin|P| + Ez * cos|P|
+    const float AbsPitchRad = FMath::Abs(PitchRad);
+    const float HalfH = Extents.Y;
+    const float HalfV = Extents.X * FMath::Sin(AbsPitchRad) + Extents.Z * FMath::Cos(AbsPitchRad);
+
+    // FOV is horizontal in Unreal by default.
+    const float HFovRad = FMath::DegreesToRadians(FOV) * 0.5f;
+    const float VFovRad = FMath::Atan(FMath::Tan(HFovRad) / AspectRatio);
+
+    // Distance required to fit each axis.
+    const float DistForH = HalfH / FMath::Tan(HFovRad);
+    const float DistForV = HalfV / FMath::Tan(VFovRad);
+    const float Distance = FMath::Max(DistForH, DistForV) * 1.05f; // 5% cushion
+
+    // Camera position along the look direction from the center.
+    const FVector LookDir(FMath::Cos(AbsPitchRad), 0.f, -FMath::Sin(AbsPitchRad));
+    const FVector CamPos = Center - LookDir * Distance;
+
+    Cam->SetActorLocation(CamPos);
+
+    FRotator CamRot;
+    CamRot.Pitch = PitchDeg;
+    CamRot.Yaw = 0.f;
+    CamRot.Roll = 0.f;
+    Cam->SetActorRotation(CamRot);
+
+    UE_LOG(LogTemp, Display, TEXT("FitCameraToBoard: center=%s extent=%s halfH=%.0f halfV=%.0f distance=%.0f camPos=%s"),
+        *Center.ToString(), *Extents.ToString(), HalfH, HalfV, Distance, *CamPos.ToString());
 }
