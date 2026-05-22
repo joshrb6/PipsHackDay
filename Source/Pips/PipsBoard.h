@@ -8,6 +8,9 @@
 // at the top with other forward declarations or in the class body
 class UTextRenderComponent;
 
+DECLARE_MULTICAST_DELEGATE(FOnPuzzleSolved);
+DECLARE_MULTICAST_DELEGATE(FOnPuzzleInvalid);
+
 UCLASS()
 class PIPS_API APipsBoard : public AActor
 {
@@ -32,6 +35,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Pips")
 	void SpawnFromPuzzle(const FPipsPuzzle& Puzzle);
 
+	/** Stores the currently loaded puzzle, used by validation. */
+	UPROPERTY()
+	FPipsPuzzle CurrentPuzzle;
+
+	FOnPuzzleSolved OnPuzzleSolved;
+	FOnPuzzleInvalid OnPuzzleInvalid;
+
+	/** Builds a cell-to-pip-value map from currently placed dominoes. */
+	TMap<FIntPoint, int32> CollectCellValues() const;
+
+	/** Evaluates current state and triggers UI on win/fail. */
+	void EvaluateAndNotify();
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pips")
 	UMaterialInterface* CellMaterial = nullptr;
 
@@ -40,6 +56,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pips")
 	UMaterialInterface* PipMaterial = nullptr;
+
+	UPROPERTY()
+	TArray<class APipsDomino*> TrayDominoes;
 
 
 	/** Returns true if a cell exists in the currently loaded puzzle. */
@@ -83,9 +102,6 @@ private:
 
 	UPROPERTY()
 	TArray<UStaticMeshComponent*> BadgeBackings;
-
-	UPROPERTY()
-	TArray<class APipsDomino*> TrayDominoes;
 	
 	/** Cached centroid offset used to center the puzzle at the board origin. */
 	FVector CachedCentroid = FVector::ZeroVector;
@@ -95,6 +111,9 @@ private:
 
 	/** Which domino (if any) currently occupies each cell. */
 	TMap<FIntPoint, class APipsDomino*> CellOccupancy;
+
+	uint32 LastInvalidHash = 0;
+	uint32 ComputePlacementHash() const;
 
 	/** Converts a grid coordinate to a local-space position. */
 	FVector GridToLocal(const FIntPoint& Cell) const;

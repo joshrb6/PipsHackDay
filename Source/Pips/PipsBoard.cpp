@@ -6,6 +6,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Components/TextRenderComponent.h"
 #include "PipsDomino.h"
+#include "PipsRules.h"
 
 
 static FString GetRegionBadgeText(const FPipsRegion& Region)
@@ -46,6 +47,24 @@ APipsBoard::APipsBoard()
 void APipsBoard::BeginPlay()
 {
     Super::BeginPlay();
+
+    OnPuzzleSolved.AddLambda([]()
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green,
+                TEXT("PUZZLE SOLVED — congratulations!"));
+        }
+    });
+
+    OnPuzzleInvalid.AddLambda([]()
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red,
+                TEXT("Puzzle full but constraints not satisfied — try again."));
+        }
+    });
 
     UPipsGameInstance* GI = GetGameInstance<UPipsGameInstance>();
     if (!GI)
@@ -108,6 +127,7 @@ void APipsBoard::ClearVisuals()
 void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
 {
     ClearVisuals();
+    CurrentPuzzle = Puzzle;  // ADD THIS LINE
 
     // Find Engine's built-in cube mesh — perfect placeholder.
     UStaticMesh* CubeMesh = LoadObject<UStaticMesh>(
@@ -297,6 +317,69 @@ void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
         TrayDominoes.Num(), TrayRows, TrayCols);
 }
 
+TMap<FIntPoint, int32> APipsBoard::CollectCellValues() const
+{
+    TMap<FIntPoint, int32> Result;
+    for (APipsDomino* D : TrayDominoes)
+    {
+        if (!D || !D->bPlaced || D->OccupiedCells.Num() != 2) continue;
+        // PipA corresponds to OccupiedCells[0] (CellA), PipB to OccupiedCells[1] (CellB)
+        // because TryPlaceDomino orients +X (HalfA) toward CellA, but actually:
+        // Looking at TryPlaceDomino: we set OccupiedCells = { CellA, CellB } and orient
+        // so that HalfA (at local -X) maps to CellA. PipA is on HalfA.
+        Result.Add(D->OccupiedCells[0], D->PipA);
+        Result.Add(D->OccupiedCells[1], D->PipB);
+    }
+    return Result;
+}
+
+uint32 APipsBoard::ComputePlacementHash() const
+{
+    // Stable hash of (cell, pip value) pairs.
+    TArray<TPair<FIntPoint, int32>> Sorted;
+    for (APipsDomino* D : TrayDominoes)
+    {
+        if (!D || !D->bPlaced || D->OccupiedCells.Num() != 2) continue;
+        Sorted.Add(TPair<FIntPoint, int32>(D->OccupiedCells[0], D->PipA));
+        Sorted.Add(TPair<FIntPoint, int32>(D->OccupiedCells[1], D->PipB));
+    }
+    Sorted.Sort([](const TPair<FIntPoint, int32>& A, const TPair<FIntPoint, int32>& B)
+    {
+        if (A.Key.X != B.Key.X) return A.Key.X < B.Key.X;
+        return A.Key.Y < B.Key.Y;
+    });
+
+    uint32 Hash = 0;
+    for (const auto& Pair : Sorted)
+    {
+        Hash = HashCombine(Hash, GetTypeHash(Pair.Key));
+        Hash = HashCombine(Hash, GetTypeHash(Pair.Value));
+    }
+    return Hash;
+}
+
+void APipsBoard::EvaluateAndNotify()
+{
+    const TMap<FIntPoint, int32> Values = CollectCellValues();
+    const EPipsResult Result = UPipsRules::EvaluatePuzzle(CurrentPuzzle, Values);
+
+    if (Result == EPipsResult::Solved)
+    {
+        OnPuzzleSolved.Broadcast();
+    }
+    else if (Result == EPipsResult::Invalid)
+    {
+        // Hash the placement so we only notify once per unique invalid state.
+        const uint32 Hash = ComputePlacementHash();
+        if (Hash != LastInvalidHash)
+        {
+            LastInvalidHash = Hash;
+            OnPuzzleInvalid.Broadcast();
+        }
+    }
+    // NotFinished: do nothing.
+}
+
 bool APipsBoard::IsValidCell(const FIntPoint& Cell) const
 {
     return ValidCells.Contains(Cell);
@@ -387,10 +470,19 @@ bool APipsBoard::TryPlaceDomino(APipsDomino* Domino, const FIntPoint& CellA, con
     Domino->SetActorRotation(FRotator(0.f, Yaw, 0.f));
 
     Domino->OccupiedCells = { CellA, CellB };
+    Domino->VirtualCells = { CellA, CellB };   // ADD THIS LINE
     Domino->bPlaced = true;
     CellOccupancy.Add(CellA, Domino);
     CellOccupancy.Add(CellB, Domino);
 
+    Domino->LastValidLocation = Final;
+    Domino->LastValidRotation = FRotator(0.f, Yaw, 0.f);
+    Domino->LastValidCells = { CellA, CellB };
+    Domino->bHasLastValid = true;
+    Domino->bDangling = false;  // it's now properly placed
+
+    EvaluateAndNotify();
+    
     return true;
 }
 

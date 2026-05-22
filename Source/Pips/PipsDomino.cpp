@@ -69,6 +69,9 @@ void APipsDomino::SpawnPipsForHalf(int32 PipCount, const FVector& HalfCenter, fl
 
 void APipsDomino::Initialize(int32 InPipA, int32 InPipB, float InCellSize)
 {
+    PipA = InPipA;
+    PipB = InPipB;
+    
     UStaticMesh* CubeMesh = LoadObject<UStaticMesh>(
         nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
     if (!CubeMesh) return;

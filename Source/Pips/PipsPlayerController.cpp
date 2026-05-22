@@ -36,6 +36,7 @@ void APipsPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
 	InputComponent->BindAction("PipsPrimary", IE_Pressed, this, &APipsPlayerController::OnPrimaryPressed);
+	InputComponent->BindAction("PipsRotate",  IE_Pressed, this, &APipsPlayerController::OnRotatePressed);
 	//InputComponent->BindAction("PipsPrimary", IE_Released, this, &APipsPlayerController::OnPrimaryReleased);
 }
 
@@ -61,6 +62,14 @@ void APipsPlayerController::OnPrimaryPressed()
 {
 	APipsBoard* B = GetBoard();
 	if (!B) return;
+
+	// Resolve any dangling domino first (unless the user is clicking *this* dangling
+	// domino to pick it up — see below).
+	APipsDomino* Dangling = FindDanglingDomino();
+	if (Dangling && Dangling != HoveredDomino)
+	{
+		ResolveDangling(Dangling);
+	}
 
 	if (DraggedDomino)
 	{
@@ -88,6 +97,10 @@ void APipsPlayerController::OnPrimaryPressed()
 		// If it was placed, remove from board occupancy so we can move it freely.
 		B->UnplaceDomino(DraggedDomino);
 
+		DraggedDomino->bDangling = false;
+		DraggedDomino->bHasLastValid = false;  // picking up invalidates the "go back" anchor
+		DraggedDomino->VirtualCells.Reset();  // ADD THIS
+
 		FVector PlanePos;
 		if (GetCursorPositionOnDragPlane(PlanePos))
 		{
@@ -103,6 +116,35 @@ void APipsPlayerController::OnPrimaryReleased()
 	// Slice B: just return to where it was. Slice C will add snap.
 	DraggedDomino->SetActorLocation(DragOriginalLocation);
 	DraggedDomino = nullptr;
+}
+
+APipsDomino* APipsPlayerController::FindDanglingDomino() const
+{
+	APipsBoard* B = Board;  // already cached by GetBoard() at this point
+	if (!B) return nullptr;
+	for (APipsDomino* D : B->TrayDominoes)
+	{
+		if (D && D->bDangling) return D;
+	}
+	return nullptr;
+}
+
+void APipsPlayerController::ResolveDangling(APipsDomino* Domino)
+{
+	if (!Domino) return;
+	APipsBoard* B = GetBoard();
+	if (!B) return;
+
+	if (Domino->bHasLastValid && Domino->LastValidCells.Num() == 2)
+	{
+		// Try to re-place at its last valid cells. Usually succeeds because nothing else has moved.
+		if (B->TryPlaceDomino(Domino, Domino->LastValidCells[0], Domino->LastValidCells[1]))
+		{
+			return;
+		}
+	}
+	// Fallback: return to tray.
+	ReturnToTray(Domino);
 }
 
 bool APipsPlayerController::GetCursorPositionOnDragPlane(FVector& OutWorld) const
@@ -177,6 +219,65 @@ void APipsPlayerController::ReturnToTray(APipsDomino* Domino)
 {
 	if (!Domino) return;
 	GetBoard()->UnplaceDomino(Domino);
+	Domino->bDangling = false;          // ADD THIS
+	Domino->VirtualCells.Reset();       // AND THIS
 	Domino->SetActorLocation(Domino->TrayLocation);
 	Domino->SetActorRotation(Domino->TrayRotation);
+}
+
+void APipsPlayerController::RotatePlacedDomino(APipsDomino* Domino)
+{
+	if (!Domino) return;
+	if (!Domino->bPlaced && !Domino->bDangling) return;
+	if (Domino->VirtualCells.Num() != 2) return;
+
+	APipsBoard* B = GetBoard();
+	if (!B) return;
+
+	const FIntPoint OldA = Domino->VirtualCells[0];
+	const FIntPoint OldB = Domino->VirtualCells[1];
+	const FIntPoint Delta = OldB - OldA;
+	const FIntPoint Rotated(Delta.Y, -Delta.X);
+	const FIntPoint NewB = OldA + Rotated;
+
+	if (B->TryPlaceDomino(Domino, OldA, NewB))
+	{
+		return;  // VirtualCells gets updated by TryPlaceDomino via the line above
+	}
+
+	// Invalid: enter dangling state — show at rotated pose but don't occupy.
+	B->UnplaceDomino(Domino);
+	Domino->bDangling = true;
+	Domino->VirtualCells = { OldA, NewB };  // CRITICAL: remember where we're "showing"
+
+	const FVector PosA = B->CellToWorld(OldA);
+	const FVector PosNewB = B->CellToWorld(NewB);
+	const FVector Center = (PosA + PosNewB) * 0.5f;
+	const FVector Direction = (PosNewB - PosA).GetSafeNormal();
+	const float Yaw = FMath::RadiansToDegrees(FMath::Atan2(Direction.Y, Direction.X));
+
+	Domino->SetActorLocation(FVector(Center.X, Center.Y, B->GetPlacementZ()));
+	Domino->SetActorRotation(FRotator(0.f, Yaw, 0.f));
+}
+
+void APipsPlayerController::OnRotatePressed()
+{
+	APipsDomino* Dangling = FindDanglingDomino();
+	if (Dangling && Dangling != HoveredDomino && Dangling != DraggedDomino)
+	{
+		ResolveDangling(Dangling);
+	}
+	
+	if (DraggedDomino)
+	{
+		// In-hand rotation: just spin it 90° around Z, no validation needed.
+		const FRotator Current = DraggedDomino->GetActorRotation();
+		DraggedDomino->SetActorRotation(Current + FRotator(0.f, 90.f, 0.f));
+		return;
+	}
+
+	if (HoveredDomino && (HoveredDomino->bPlaced || HoveredDomino->bDangling))
+	{
+		RotatePlacedDomino(HoveredDomino);
+	}
 }

@@ -40,6 +40,34 @@ public:
 	UPROPERTY()
 	FRotator TrayRotation = FRotator::ZeroRotator;
 	
+	/** Last valid on-board placement (cells + transform), for revert-on-abandon. */
+	UPROPERTY()
+	FVector LastValidLocation = FVector::ZeroVector;
+
+	UPROPERTY()
+	FRotator LastValidRotation = FRotator::ZeroRotator;
+
+	UPROPERTY()
+	TArray<FIntPoint> LastValidCells;
+
+	/** Visual cells the domino is currently shown at (may be invalid). Used as rotation pivot. */
+	UPROPERTY()
+	TArray<FIntPoint> VirtualCells;
+
+	UPROPERTY()
+	int32 PipA = 0;
+
+	UPROPERTY()
+	int32 PipB = 0;
+
+	/** True if this domino has ever been validly placed (and thus has a "last valid" to return to). */
+	UPROPERTY()
+	bool bHasLastValid = false;
+
+	/** True if domino is shown on the board but not occupying cells (mid-rotation state). */
+	UPROPERTY()
+	bool bDangling = false;
+	
 protected:
 	UPROPERTY()
 	USceneComponent* Root = nullptr;

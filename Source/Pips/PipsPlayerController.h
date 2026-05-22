@@ -43,6 +43,9 @@ private:
 
 	void UpdateHover();
 
+	APipsDomino* FindDanglingDomino() const;
+	void ResolveDangling(APipsDomino* Domino);
+
 	/** Cached board reference. Found on first use. */
 	UPROPERTY()
 	class APipsBoard* Board = nullptr;
@@ -54,4 +57,8 @@ private:
 
 	/** Returns the domino to its tray position (used on invalid drop). */
 	void ReturnToTray(APipsDomino* Domino);
+
+	void RotatePlacedDomino(APipsDomino* Domino);
+
+	void OnRotatePressed();
 };
