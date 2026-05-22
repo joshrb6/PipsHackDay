@@ -50,20 +50,6 @@ void UPipsGameInstance::EnsureDailyLoaded(const FString& Date, TFunction<void(bo
 void UPipsGameInstance::Init()
 {
 	Super::Init();
-
-	EnsureDailyLoaded(TEXT("2026-05-21"), [this](bool bOk)
-	{
-		if (bOk)
-		{
-			const FPipsDailyData* D = FindDaily(TEXT("2026-05-21"));
-			UE_LOG(LogTemp, Display, TEXT("Pips loaded: editor=%s easy dominoes=%d hard regions=%d"),
-				*D->Editor, D->Easy.Dominoes.Num(), D->Hard.Regions.Num());
-		}
-		else
-		{
-			UE_LOG(LogTemp, Error, TEXT("Pips: failed to load daily"));
-		}
-	});
 }
 
 const FPipsDailyData* UPipsGameInstance::FindDaily(const FString& Date) const

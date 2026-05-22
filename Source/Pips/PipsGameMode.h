@@ -11,4 +11,9 @@ class PIPS_API APipsGameMode : public AGameModeBase
 
 public:
 	APipsGameMode();
+
+	virtual void BeginPlay() override;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Pips")
+	TSubclassOf<class UPipsGameplayHUDWidget> HUDWidgetClass;
 };

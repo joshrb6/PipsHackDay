@@ -11,6 +11,10 @@ void APipsPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 
+	SetInputMode(FInputModeGameAndUI()
+	.SetWidgetToFocus(nullptr)
+	.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock));
+
 	// Find the first CameraActor in the level and view through it.
 	for (TActorIterator<ACameraActor> It(GetWorld()); It; ++It)
 	{

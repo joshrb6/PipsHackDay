@@ -73,19 +73,16 @@ void APipsBoard::BeginPlay()
         return;
     }
 
-    GI->EnsureDailyLoaded(DebugDate, [this, GI](bool bOk)
+    const FString DateToLoad = GI->SelectedDate.IsEmpty() ? DebugDate : GI->SelectedDate;
+    const EPipsDifficulty DiffToLoad = GI->SelectedDate.IsEmpty() ? DebugDifficulty : GI->SelectedDifficulty;
+
+    GI->EnsureDailyLoaded(DateToLoad, [this, GI, DateToLoad, DiffToLoad](bool bOk)
     {
-        if (!bOk)
-        {
-            UE_LOG(LogTemp, Error, TEXT("PipsBoard: failed to load daily for %s"), *DebugDate);
-            return;
-        }
-        const FPipsDailyData* Daily = GI->FindDaily(DebugDate);
+        if (!bOk) { /* error */ return; }
+        const FPipsDailyData* Daily = GI->FindDaily(DateToLoad);
         if (!Daily) return;
 
-        const FPipsPuzzle& Puzzle = Daily->GetByDifficulty(DebugDifficulty);
-        UE_LOG(LogTemp, Display, TEXT("PipsBoard: spawning %s puzzle with %d regions"),
-            *DebugDate, Puzzle.Regions.Num());
+        const FPipsPuzzle& Puzzle = Daily->GetByDifficulty(DiffToLoad);
         SpawnFromPuzzle(Puzzle);
     });
 }
