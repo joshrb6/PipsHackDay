@@ -48,6 +48,7 @@ void APipsDomino::SpawnPipsForHalf(int32 PipCount, const FVector& HalfCenter, fl
         Pip->SetStaticMesh(SphereMesh);
         Pip->SetupAttachment(Root); // Attach to Root, not the half
         Pip->RegisterComponent();
+        Pip->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
         const FVector LocalPos = HalfCenter + FVector(
             Pos.X * HalfDim,
@@ -84,6 +85,8 @@ void APipsDomino::Initialize(int32 InPipA, int32 InPipB, float InCellSize)
         Half->SetStaticMesh(CubeMesh);
         Half->SetupAttachment(Root);
         Half->RegisterComponent();
+        Half->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+        Half->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
         Half->SetRelativeLocation(LocalPos);
         Half->SetRelativeScale3D(FVector(
             HalfLength / 100.f,
