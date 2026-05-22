@@ -317,3 +317,6 @@ RELEASE_MSG
 # Linux project files
 /Makefile
 /.ignore
+
+# Local secrets / per-user config
+/Config/PipsConfig.ini
