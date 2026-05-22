@@ -24,8 +24,11 @@ public:
 	EPipsDifficulty SelectedDifficulty = EPipsDifficulty::Easy;
 
 	/** True when we should bypass the network and load from embedded/local JSON. */
-	UPROPERTY(BlueprintReadOnly, Category = "Pips")
-	bool bDebugMode = true;
+	// UPROPERTY(BlueprintReadOnly, Category = "Pips")
+	// bool bDebugMode = true;
+
+	UPROPERTY()
+	class UPipsApiClient* ApiClient = nullptr;
 
 	virtual void Init() override;
 

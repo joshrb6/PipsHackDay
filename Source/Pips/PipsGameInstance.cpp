@@ -5,51 +5,69 @@
 
 #include "PipsJsonParser.h"
 
+#include "PipsApiClient.h"
+
 // PipsGameInstance.cpp (sketch)
 void UPipsGameInstance::EnsureDailyLoaded(const FString& Date, TFunction<void(bool)> OnDone)
 {
+	// Layer 1: in-memory cache
 	if (History.Contains(Date))
 	{
 		OnDone(true);
 		return;
 	}
 
-	if (bDebugMode)
+	// Layer 2: local file (offline cache / debug data)
+	const FString FilePath = FPaths::ProjectContentDir() / TEXT("PipsDebugData") / (Date + TEXT(".json"));
+	if (IFileManager::Get().FileExists(*FilePath))
 	{
-		const FString FilePath = FPaths::ProjectContentDir() / TEXT("PipsDebugData") / (Date + TEXT(".json"));
-		UE_LOG(LogTemp, Display, TEXT("Pips: looking for %s, exists=%d"), 
-			*FilePath, IFileManager::Get().FileExists(*FilePath));
-		
 		FString Raw;
-		if (!FFileHelper::LoadFileToString(Raw, *FilePath))
+		if (FFileHelper::LoadFileToString(Raw, *FilePath))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Pips debug: no local file for %s at %s"), *Date, *FilePath);
-			OnDone(false);
-			return;
+			FPipsDailyData Parsed;
+			if (UPipsJsonParser::ParseDaily(Raw, Parsed))
+			{
+				History.Add(Date, Parsed);
+				UE_LOG(LogTemp, Display, TEXT("Pips: loaded %s from local cache"), *Date);
+				OnDone(true);
+				return;
+			}
 		}
+	}
 
-		FPipsDailyData Parsed;
-		if (UPipsJsonParser::ParseDaily(Raw, Parsed))   // your boundary parser
-		{
-			History.Add(Date, Parsed);
-			OnDone(true);
-		}
-		else
-		{
-			OnDone(false);
-		}
-	}
-	else
+	// Layer 3: network
+	if (!ApiClient)
 	{
-		// Production: call UPipsApiClient::FetchPuzzleForDate, parse, add to History, callback.
-		// Not implemented yet.
+		UE_LOG(LogTemp, Error, TEXT("Pips: no API client; cannot fetch %s"), *Date);
 		OnDone(false);
+		return;
 	}
+
+	UE_LOG(LogTemp, Display, TEXT("Pips: fetching %s from API"), *Date);
+	ApiClient->FetchPuzzleForDate(Date,
+		FOnPipsApiResult::CreateLambda([this, Date, OnDone](bool bSuccess, FPipsDailyData Data)
+		{
+			if (!bSuccess)
+			{
+				OnDone(false);
+				return;
+			}
+
+			History.Add(Date, Data);
+
+			// Persist to disk for offline access next time.
+			const FString Path = FPaths::ProjectContentDir() / TEXT("PipsDebugData") / (Date + TEXT(".json"));
+			// Re-serialize from struct would be ideal; for now save the raw response.
+			// Easier: just don't cache to disk for the moment. Could add later.
+
+			OnDone(true);
+		}));
 }
 
 void UPipsGameInstance::Init()
 {
 	Super::Init();
+	ApiClient = NewObject<UPipsApiClient>(this, UPipsApiClient::StaticClass());
 }
 
 const FPipsDailyData* UPipsGameInstance::FindDaily(const FString& Date) const
