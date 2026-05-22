@@ -23,6 +23,23 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pips")
 	UMaterialInterface* PipMaterial = nullptr;
 
+
+	/** Cells this domino currently occupies, if placed. Empty otherwise. */
+	UPROPERTY()
+	TArray<FIntPoint> OccupiedCells;
+
+	/** True when the domino has been placed on the board (vs. in tray or dragging). */
+	UPROPERTY()
+	bool bPlaced = false;
+
+	/** Tray position to return to when an invalid placement is attempted. */
+	UPROPERTY()
+	FVector TrayLocation = FVector::ZeroVector;
+
+	/** Tray rotation to return to. */
+	UPROPERTY()
+	FRotator TrayRotation = FRotator::ZeroRotator;
+	
 protected:
 	UPROPERTY()
 	USceneComponent* Root = nullptr;

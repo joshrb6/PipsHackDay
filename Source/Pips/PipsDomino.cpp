@@ -75,8 +75,8 @@ void APipsDomino::Initialize(int32 InPipA, int32 InPipB, float InCellSize)
 
     // A domino covers two cells along its long axis.
     // We orient with long axis = X (so two halves are at +X/2 and -X/2 relative to root).
-    const float HalfLength = InCellSize * 0.5f;   // each half is one cell long
-    const float Width      = InCellSize * 0.9f;   // slightly narrower than a cell
+    const float HalfLength = InCellSize;          // each half spans one full cell
+    const float Width      = InCellSize * 0.9f;
     const float Thickness  = InCellSize * 0.2f;
 
     auto MakeHalf = [&](const FVector& LocalPos) -> UStaticMeshComponent*

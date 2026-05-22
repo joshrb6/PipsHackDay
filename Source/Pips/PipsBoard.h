@@ -40,6 +40,31 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pips")
 	UMaterialInterface* PipMaterial = nullptr;
+
+
+	/** Returns true if a cell exists in the currently loaded puzzle. */
+	UFUNCTION(BlueprintCallable, Category = "Pips")
+	bool IsValidCell(const FIntPoint& Cell) const;
+
+	/** World location of a given cell's center (Z = board surface). */
+	UFUNCTION(BlueprintCallable, Category = "Pips")
+	FVector CellToWorld(const FIntPoint& Cell) const;
+
+	/** Finds the nearest valid cell to a world position. Returns false if board has no cells. */
+	bool FindNearestCell(const FVector& WorldPos, FIntPoint& OutCell) const;
+
+	/** Returns the domino occupying the given cell, or nullptr. */
+	class APipsDomino* GetDominoAt(const FIntPoint& Cell) const;
+
+	/** Attempts to place a domino on the given two cells. Updates occupancy on success. */
+	bool TryPlaceDomino(class APipsDomino* Domino, const FIntPoint& CellA, const FIntPoint& CellB);
+
+	/** Removes a domino from any cells it currently occupies. */
+	void UnplaceDomino(class APipsDomino* Domino);
+
+	/** Z height of the top face of a placed domino. */
+	UFUNCTION(BlueprintCallable, Category = "Pips")
+	float GetPlacementZ() const;
 	
 protected:
 	virtual void BeginPlay() override;
@@ -61,6 +86,15 @@ private:
 
 	UPROPERTY()
 	TArray<class APipsDomino*> TrayDominoes;
+	
+	/** Cached centroid offset used to center the puzzle at the board origin. */
+	FVector CachedCentroid = FVector::ZeroVector;
+
+	/** Cells that exist in the current puzzle (for fast validity queries). */
+	TSet<FIntPoint> ValidCells;
+
+	/** Which domino (if any) currently occupies each cell. */
+	TMap<FIntPoint, class APipsDomino*> CellOccupancy;
 
 	/** Converts a grid coordinate to a local-space position. */
 	FVector GridToLocal(const FIntPoint& Cell) const;

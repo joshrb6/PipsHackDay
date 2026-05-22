@@ -152,6 +152,14 @@ void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
     const float CentroidCol = (MinCell.Y + MaxCell.Y) * 0.5f;
     const FVector Centroid(-CentroidRow * CellSize, CentroidCol * CellSize, 0.f);
 
+    CachedCentroid = Centroid;
+    ValidCells.Reset();
+    CellOccupancy.Reset();
+    for (const TPair<FIntPoint, int32>& Pair : CellToRegion)
+    {
+        ValidCells.Add(Pair.Key);
+    }
+
     // Second pass: spawn tiles, tinted by region color.
     for (const TPair<FIntPoint, int32>& Pair : CellToRegion)
     {
@@ -175,7 +183,11 @@ void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
         if (CellMaterial)
         {
             UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(CellMaterial, this);
-            MID->SetVectorParameterValue(TEXT("BaseColor"), GetRegionColor(RegionIdx));
+            const EPipsRegionType RegionType = Puzzle.Regions[RegionIdx].Type;
+            const FLinearColor TileColor = (RegionType == EPipsRegionType::Empty)
+                ? FLinearColor(0.78f, 0.70f, 0.56f)   // muted beige
+                : GetRegionColor(RegionIdx);
+            MID->SetVectorParameterValue(TEXT("BaseColor"), TileColor);
             Mesh->SetMaterial(0, MID);
         }
 
@@ -196,7 +208,7 @@ void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
         const FVector AnchorLocal = GridToLocal(AnchorCell) - Centroid;
 
         // Position badge at the bottom-right corner of the anchor cell, slightly raised.
-        const FVector BadgeOffset(-CellSize * 0.35f, CellSize * 0.35f, 60.f);
+        const FVector BadgeOffset(-CellSize * 0.35f, CellSize * 0.35f, 100.f);
         const FVector BadgePos = AnchorLocal + BadgeOffset;
 
         // Colored backing cube.
@@ -239,18 +251,18 @@ void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
     // Dominoes are oriented "short" (long axis = Y, vertical on screen) to fit more per row.
     const int32 NumDominoes = Puzzle.Dominoes.Num();
 
-    // Pack tray as a roughly-square grid, with up to 8 per row.
-    const int32 TrayCols = FMath::Min(NumDominoes, 8);
+    // Pack tray as a roughly-square grid, with up to 5 per row.
+    const int32 TrayCols = FMath::Min(NumDominoes, 5);
     const int32 TrayRows = FMath::DivideAndRoundUp(NumDominoes, TrayCols);
 
     // When dominoes are rotated 90° (vertical), they occupy:
     //   X (depth into screen) = CellSize (their long axis)
     //   Y (across screen)     = CellSize * 0.9 (their width)
-    const float DominoSlotX = CellSize * 1.15f; // depth spacing per row
-    const float DominoSlotY = CellSize * 1.05f; // width spacing per column
+    const float DominoSlotX = CellSize * 1.10f;   // depth spacing (between rows on screen)
+    const float DominoSlotY = CellSize * 2.20f;   // horizontal spacing (along on-screen X)
 
     // Place tray below the board (more negative X from centroid).
-    const float TrayStartX = -(MaxCell.X - CentroidRow + 1.5f) * CellSize - DominoSlotX;
+    const float TrayStartX = -(MaxCell.X - CentroidRow + 1.0f) * CellSize - DominoSlotX;  // was +1.5f
     const float RowWidth = (TrayCols - 1) * DominoSlotY;
 
     for (int32 i = 0; i < NumDominoes; ++i)
@@ -264,7 +276,7 @@ void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
             20.f);
 
         const FVector SpawnWorld = GetActorLocation() + SpawnLocal;
-        const FRotator SpawnRot(0.f, 90.f, 0.f); // Yaw 90 = long axis aligned with Y
+        const FRotator SpawnRot(0.f, 90.f, 0.f);  // was (0, 90, 0)
 
         FActorSpawnParameters Params;
         Params.Owner = this;
@@ -275,12 +287,111 @@ void APipsBoard::SpawnFromPuzzle(const FPipsPuzzle& Puzzle)
             Domino->DominoMaterial = DominoMaterial;
             Domino->PipMaterial = PipMaterial;
             Domino->Initialize(Puzzle.Dominoes[i].A, Puzzle.Dominoes[i].B, CellSize);
+            Domino->TrayLocation = SpawnWorld;
+            Domino->TrayRotation = SpawnRot;
             TrayDominoes.Add(Domino);
         }
     }
 
     UE_LOG(LogTemp, Display, TEXT("PipsBoard: spawned %d dominoes in tray (%dx%d)"),
         TrayDominoes.Num(), TrayRows, TrayCols);
+}
+
+bool APipsBoard::IsValidCell(const FIntPoint& Cell) const
+{
+    return ValidCells.Contains(Cell);
+}
+
+FVector APipsBoard::CellToWorld(const FIntPoint& Cell) const
+{
+    const FVector Local = GridToLocal(Cell) - CachedCentroid;
+    return GetActorTransform().TransformPosition(Local);
+}
+
+float APipsBoard::GetPlacementZ() const
+{
+    // Top face of the board tiles (TileHeight = 10) + half domino thickness.
+    const float TileHeight = 10.f;
+    const float DominoThickness = CellSize * 0.2f;
+    return GetActorLocation().Z + TileHeight + DominoThickness * 0.5f;
+}
+
+bool APipsBoard::FindNearestCell(const FVector& WorldPos, FIntPoint& OutCell) const
+{
+    if (ValidCells.Num() == 0) return false;
+
+    float BestDistSq = FLT_MAX;
+    for (const FIntPoint& Cell : ValidCells)
+    {
+        const FVector CellWorld = CellToWorld(Cell);
+        const float DistSq = FVector::DistSquared2D(WorldPos, CellWorld);
+        if (DistSq < BestDistSq)
+        {
+            BestDistSq = DistSq;
+            OutCell = Cell;
+        }
+    }
+    return true;
+}
+
+APipsDomino* APipsBoard::GetDominoAt(const FIntPoint& Cell) const
+{
+    APipsDomino* const* Found = CellOccupancy.Find(Cell);
+    return Found ? *Found : nullptr;
+}
+
+void APipsBoard::UnplaceDomino(APipsDomino* Domino)
+{
+    if (!Domino) return;
+    for (const FIntPoint& Cell : Domino->OccupiedCells)
+    {
+        CellOccupancy.Remove(Cell);
+    }
+    Domino->OccupiedCells.Reset();
+    Domino->bPlaced = false;
+}
+
+bool APipsBoard::TryPlaceDomino(APipsDomino* Domino, const FIntPoint& CellA, const FIntPoint& CellB)
+{
+    if (!Domino) return false;
+
+    // Both cells must exist on the board.
+    if (!IsValidCell(CellA) || !IsValidCell(CellB)) return false;
+
+    // Cells must be adjacent (differ by exactly 1 in exactly one axis).
+    const int32 DRow = FMath::Abs(CellA.X - CellB.X);
+    const int32 DCol = FMath::Abs(CellA.Y - CellB.Y);
+    if (DRow + DCol != 1) return false;
+
+    // Cells must be unoccupied, or occupied only by this same domino.
+    APipsDomino* OccA = GetDominoAt(CellA);
+    APipsDomino* OccB = GetDominoAt(CellB);
+    if ((OccA && OccA != Domino) || (OccB && OccB != Domino)) return false;
+
+    // Clear any prior placement.
+    UnplaceDomino(Domino);
+
+    // Position the domino so it spans the two cells. Long axis goes from CellA to CellB.
+    const FVector PosA = CellToWorld(CellA);
+    const FVector PosB = CellToWorld(CellB);
+    const FVector Center = (PosA + PosB) * 0.5f;
+    const FVector Final(Center.X, Center.Y, GetPlacementZ());
+
+    // Determine yaw: domino's "long axis" is +X in its local frame.
+    // We want HalfA at CellA and HalfB at CellB, so the +X local direction
+    // should point from CellA to CellB.
+    const FVector Direction = (PosB - PosA).GetSafeNormal();
+    const float Yaw = FMath::RadiansToDegrees(FMath::Atan2(Direction.Y, Direction.X));
+
+    Domino->SetActorLocation(Final);
+    Domino->SetActorRotation(FRotator(0.f, Yaw, 0.f));
+
+    Domino->OccupiedCells = { CellA, CellB };
+    Domino->bPlaced = true;
+    CellOccupancy.Add(CellA, Domino);
+    CellOccupancy.Add(CellB, Domino);
+
+    return true;
 }
 
 FLinearColor APipsBoard::GetRegionColor(int32 RegionIndex)

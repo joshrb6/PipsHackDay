@@ -42,4 +42,16 @@ private:
 	bool GetCursorPositionOnDragPlane(FVector& OutWorld) const;
 
 	void UpdateHover();
+
+	/** Cached board reference. Found on first use. */
+	UPROPERTY()
+	class APipsBoard* Board = nullptr;
+
+	APipsBoard* GetBoard();
+
+	/** Determines the two cells a dragged domino is closest to. */
+	bool ComputeSnapCells(APipsDomino* Domino, FIntPoint& OutCellA, FIntPoint& OutCellB) const;
+
+	/** Returns the domino to its tray position (used on invalid drop). */
+	void ReturnToTray(APipsDomino* Domino);
 };
